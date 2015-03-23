@@ -603,8 +603,8 @@ body_ast(DjangoParseTree, BodyScope, TreeWalker) ->
                 empty_ast(TW);
             ({'comment_tag', _, _}, TW) ->
                 empty_ast(TW);
-            ({'cycle', Names}, TW) ->
-                cycle_ast(Names, TW);
+            ({'cycle', Names, AsVar}, TW) ->
+                cycle_ast(Names, AsVar, TW);
             ({'cycle_compat', Names}, TW) ->
                 cycle_compat_ast(Names, TW);
             ({'date', 'now', {string_literal, _Pos, FormatString}}, TW) ->
@@ -1324,7 +1324,10 @@ regroup_ast(ListVariable, GrouperVariable, LocalVarName, TreeWalker) ->
 
     {Id, TreeWalker2} = begin_scope(
                           {[{LocalVarName, LocalVarAst}],
-                           [?Q("_@LocalVarAst = erlydtl_runtime:regroup(_@ListAst, _@regroup)",
+                           [?Q(["_@LocalVarAst = erlydtl_runtime:regroup(",
+                                "  _@ListAst, _@regroup,",
+                                "  [{record_info, _RecordInfo}]",
+                                ")"],
                                [{regroup, regroup_filter(GrouperVariable, [])}])
                            ]},
                           TreeWalker1),
@@ -1422,7 +1425,7 @@ ifchanged_contents_ast(Contents, {IfContentsAst, IfContentsInfo}, {ElseContentsA
       merge_info(IfContentsInfo, ElseContentsInfo)},
      TreeWalker}.
 
-cycle_ast(Names, #treewalker{ context=Context }=TreeWalker) ->
+cycle_ast(Names, undefined, #treewalker{ context=Context }=TreeWalker) ->
     {NamesTuple, VarNames}
         = lists:mapfoldl(
             fun ({string_literal, _, Str}, VarNamesAcc) ->
@@ -1439,7 +1442,20 @@ cycle_ast(Names, #treewalker{ context=Context }=TreeWalker) ->
     {ForLoop, TreeWalker1} = resolve_reserved_variable('forloop', TreeWalker),
     {{?Q("erlydtl_runtime:cycle({_@NamesTuple}, _@ForLoop)"),
       #ast_info{ var_names = VarNames }},
-     TreeWalker1}.
+     TreeWalker1};
+cycle_ast(Names, [{identifier, _, VarName}|Opts], TreeWalker) ->
+    {{VarAst, AstInfo}, TW1} = cycle_ast(Names, undefined, TreeWalker),
+    VarNameAst = varname_ast(VarName),
+    {Scope, TW2} = begin_scope(
+                     {[{VarName, VarNameAst}],
+                      [?Q("_@VarNameAst = _@VarAst")
+                       | case Opts of
+                             [silent] -> [];
+                             [] -> [VarAst]
+                         end
+                      ]},
+                     TW1),
+    {{Scope, AstInfo}, TW2}.
 
 %% Older Django templates treat cycle with comma-delimited elements as strings
 cycle_compat_ast(Names, #treewalker{ context=Context }=TreeWalker) ->
@@ -1567,9 +1583,6 @@ create_scope(Vars, VarScope) ->
           empty_scope(),
           Vars),
     {Scope, [Values]}.
-
-create_scope(Vars, Pos, TreeWalker) ->
-    create_scope(Vars, Pos, get_current_file(TreeWalker), TreeWalker).
 
 create_scope(Vars, {Row, Col}, FileName, #treewalker{ context=Context }) ->
     Level = length(Context#dtl_context.local_scopes),

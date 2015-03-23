@@ -3,6 +3,7 @@
 -export([tests/0]).
 -include("testrunner.hrl").
 -record(testrec, {foo, bar, baz}).
+-record(person, {first_name, gender}).
 
 %% {Name, DTL, Vars, Output}
 %% {Name, DTL, Vars, RenderOpts, Output}
@@ -28,8 +29,32 @@ all_test_defs() ->
         [{var1, "foo"}], <<"foo">>},
        {"Variable name is a tag name",
         <<"{{ comment }}">>,
-        [{comment, "Nice work!"}], <<"Nice work!">>}
+        [{comment, "Nice work!"}], <<"Nice work!">>},
+       #test{
+          title = "reserved name ok as variable name",
+          source = <<"{{ from }}">>,
+          render_vars = [{from, "test"}],
+          output = <<"test">>
+         }
       ]},
+     {"maps",
+      case erlang:is_builtin(erlang, is_map, 1) of
+          false -> [];
+          true ->
+              [#test{
+                  title = "simple test",
+                  source = <<"{{ msg.hello }}">>,
+                  render_vars = [{msg, maps:put(hello, "world", maps:new())}],
+                  output = <<"world">>
+                 },
+               #test{
+                  title = "various key types",
+                  source = <<"{{ msg.key1 }},{{ msg.key2 }},{{ msg.key3 }},{{ msg.4 }}">>,
+                  render_vars = [{msg, maps:from_list([{key1, 1}, {"key2", 2}, {<<"key3">>, 3}, {4, "value4"}])}],
+                  output = <<"1,2,3,value4">>
+                 }
+              ]
+      end},
      {"comment",
       [{"comment block is excised",
         <<"bob {% comment %}(moron){% endcomment %} loblaw">>,
@@ -62,13 +87,37 @@ all_test_defs() ->
         <<"{{ \"foo\"|add:\"\\\"\" }}">>, [], <<"foo\"">>}
       ]},
      {"cycle",
-      [{"Cycling through quoted strings",
+      [#test{
+          title = "deprecated cycle syntax",
+          source = <<"{% for i in test %}{% cycle a,b %}{{ i }},{% endfor %}">>,
+          render_vars = [{test, [0,1,2,3,4]}],
+          output = <<"a0,b1,a2,b3,a4,">>
+         },
+       {"Cycling through quoted strings",
         <<"{% for i in test %}{% cycle 'a' 'b' %}{{ i }},{% endfor %}">>,
         [{test, ["0", "1", "2", "3", "4"]}], <<"a0,b1,a2,b3,a4,">>},
        {"Cycling through normal variables",
         <<"{% for i in test %}{% cycle aye bee %}{{ i }},{% endfor %}">>,
         [{test, ["0", "1", "2", "3", "4"]}, {aye, "a"}, {bee, "b"}],
-        <<"a0,b1,a2,b3,a4,">>}
+        <<"a0,b1,a2,b3,a4,">>},
+       #test{
+          title = "mix strings and variables",
+          source = <<"{% for i in test %}{% cycle 'a' b 'c' %}{{ i }},{% endfor %}">>,
+          render_vars = [{test, [0,1,2,3,4]}, {b, 'B'}],
+          output = <<"a0,B1,c2,a3,B4,">>
+         },
+       #test{
+          title = "keep current value in local variable",
+          source = <<"{% for i in test %}{% cycle 'a' 'b' as c %}{{ i }}{{ c }},{% endfor %}">>,
+          render_vars = [{test, [0,1,2,3,4]}],
+          output = <<"a0a,b1b,a2a,b3b,a4a,">>
+         },
+       #test{
+          title = "keep current value silently in local variable",
+          source = <<"{% for i in test %}{% cycle 'a' 'b' as c silent %}{{ i }}{{ c }},{% endfor %}">>,
+          render_vars = [{test, [0,1,2,3,4]}],
+          output = <<"0a,1b,2a,3b,4a,">>
+         }
       ]},
      {"number literal",
       [{"Render integer",
@@ -143,7 +192,13 @@ all_test_defs() ->
        {"Index tuple using a \"reserved\" keyword",
         <<"{{ list.count }}">>,
         [{list, [{count, 123}]}],
-        <<"123">>}
+        <<"123">>},
+       {"Index list value",
+        <<"{{ content.description }}">>,
+        [{content, "test"}], <<"">>},
+       {"Index binary value",
+        <<"{{ content.description }}">>,
+        [{content, <<"test">>}], <<"">>}
       ]},
      {"now",
       [{"now functional",
@@ -1266,7 +1321,19 @@ all_test_defs() ->
         <<"People: {% regroup people by gender as gender_list %}{% for gender in gender_list %}{{ gender.grouper }}\n{% for item in gender.list %}{{ item.first_name }}\n{% endfor %}{% endfor %}Done.">>,
         [{people, [[{first_name, "George"}, {gender, "Male"}], [{first_name, "Bill"}, {gender, "Male"}],
                    [{first_name, "Margaret"}, {gender, "Female"}], [{first_name, "Condi"}, {gender, "Female"}]]}],
-        <<"People: Male\nGeorge\nBill\nFemale\nMargaret\nCondi\nDone.">>}
+        <<"People: Male\nGeorge\nBill\nFemale\nMargaret\nCondi\nDone.">>},
+       #test{
+          title = "regroup record",
+          source = <<"{% regroup people by gender as gender_list %}{% for gender in gender_list %}{{ gender.grouper }}:\n{% for person in gender.list %} - {{ person.first_name }}\n{% endfor %}{% endfor %}">>,
+          compile_opts = [{record_info, [{person, record_info(fields, person)}]} | (#test{})#test.compile_opts],
+          render_vars = [{people, [#person{ first_name = "George", gender = "Male" },
+                                   #person{ first_name = "Bill", gender = "Male" },
+                                   #person{ first_name = "Margaret", gender = "Female" },
+                                   #person{ first_name = "Condi", gender = "Female" }
+                                  ]}
+                        ],
+          output = <<"Male:\n - George\n - Bill\nFemale:\n - Margaret\n - Condi\n">>
+         }
       ]},
      {"spaceless",
       [{"Beginning", <<"{% spaceless %}    <b>foo</b>{% endspaceless %}">>, [], <<"<b>foo</b>">>},
@@ -1597,6 +1664,12 @@ all_test_defs() ->
         <<"{{ QWER|reverse }}">>, [{'QWER', "Qwerty"}], [],
         [{default_libraries, [test1]},
          {libraries, [{test1, erlydtl_lib_test1}]}],
+        <<"ytrewQ">>
+       },
+       {"lib with multiple behaviours",
+        <<"{{ QWER|reverse }}">>, [{'QWER', "Qwerty"}], [],
+        [{default_libraries, [test2]},
+         {libraries, [{test2, erlydtl_lib_test2}]}],
         <<"ytrewQ">>
        }
       ]},
