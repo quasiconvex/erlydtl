@@ -67,7 +67,11 @@
          load_library/4, shorten_filename/2, push_auto_escape/2,
          pop_auto_escape/1, token_pos/1, is_stripped_token_empty/1]).
 
+-ifdef(MERL_DEP).
 -include_lib("merl/include/merl.hrl").
+-else.
+-include_lib("syntax_tools/include/merl.hrl").
+-endif.
 -include("erlydtl_ext.hrl").
 
 
@@ -320,13 +324,14 @@ maybe_debug_template(Forms, Context) ->
 is_up_to_date(CheckSum, Context) ->
     Module = Context#dtl_context.module,
     {M, F} = Context#dtl_context.reader,
+    ReaderOptions = Context#dtl_context.reader_options,
     case catch Module:source() of
         {_, CheckSum} ->
             case catch Module:dependencies() of
                 L when is_list(L) ->
                     RecompileList = lists:foldl(
                                       fun ({XFile, XCheckSum}, Acc) ->
-                                              case catch M:F(XFile) of
+                                              case catch erlydtl_runtime:read_file_internal(M, F, XFile, ReaderOptions) of
                                                   {ok, Data} ->
                                                       case binary_to_list(erlang:md5(Data)) of
                                                           XCheckSum ->
@@ -584,7 +589,7 @@ body_ast(DjangoParseTree, BodyScope, TreeWalker) ->
                         lists:foldr(
                           fun ({ChildFile, ChildPos, ChildBlock}, {{SuperAst, SuperInfo}, AccTW}) ->
                                   BlockScope = create_scope(
-                                                 [{block, ?Q("[{super, _@SuperAst}]"), safe}],
+                                                 [{block, ?Q("fun (super) -> _@SuperAst; (_) -> [] end"), safe}],
                                                  ChildPos, ChildFile, AccTW),
                                   {{BlockAst, BlockInfo}, BlockTW} = body_ast(ChildBlock, BlockScope, AccTW),
                                   {{BlockAst, merge_info(SuperInfo, BlockInfo)}, BlockTW}
@@ -1028,11 +1033,12 @@ include_ast(File, ArgList, Scopes, #treewalker{ context=Context }=TreeWalker) ->
 ssi_ast(FileName, #treewalker{
                      context=#dtl_context{
                                 reader = {Mod, Fun},
+                                reader_options = ReaderOptions,
                                 doc_root = Dir
                                }
                     }=TreeWalker) ->
     {{FileAst, Info}, TreeWalker1} = value_ast(FileName, true, true, TreeWalker),
-    {{?Q("erlydtl_runtime:read_file(_@Mod@, _@Fun@, _@Dir@, _@FileAst)"), Info}, TreeWalker1}.
+    {{?Q("erlydtl_runtime:read_file(_@Mod@, _@Fun@, _@Dir@, _@FileAst, _@ReaderOptions@)"), Info}, TreeWalker1}.
 
 filter_tag_ast(FilterList, Contents, TreeWalker) ->
     {{InnerAst, Info}, TreeWalker1} = body_ast(Contents, push_auto_escape(did, TreeWalker)),
