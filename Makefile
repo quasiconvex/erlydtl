@@ -1,6 +1,6 @@
 ERL=erl
 ERLC=erlc
-REBAR=./rebar $(REBAR_ARGS)
+REBAR=rebar
 
 all: compile
 
